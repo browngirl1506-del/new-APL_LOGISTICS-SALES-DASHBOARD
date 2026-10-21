@@ -1,0 +1,270 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+
+st.set_page_config(
+    page_title="APL Logistics Dashboard",
+    page_icon="📦",
+    layout="wide"
+)
+
+st.markdown("""
+<style>
+.stApp {
+    background-color: #071426;
+    color: white;
+}
+[data-testid="stMetric"] {
+    background-color: #142B49;
+    padding: 18px;
+    border-radius: 12px;
+    border: 1px solid #29476B;
+}
+h1, h2, h3 {
+    color: #8DB8FF;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("📦 APL Logistics Sales Dashboard")
+st.caption("Sales Performance | Customer Analysis | Discount Insights")
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload APL Logistics CSV or Excel file",
+    type=["csv", "xlsx"]
+)
+
+if uploaded_file is None:
+    st.info("Please upload your cleaned APL Logistics dataset.")
+    st.stop()
+
+try:
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    df.columns = df.columns.str.strip()
+
+except Exception as e:
+    st.error(f"Could not read the file: {e}")
+    st.stop()
+
+st.sidebar.success(f"Loaded {len(df):,} rows")
+
+# Convert numeric columns
+numeric_columns = [
+    "Sales", "Order Profit Per Order",
+    "Order Item Discount", "Order Item Quantity",
+    "Order Item Product Price"
+]
+
+for col in numeric_columns:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+# KPI calculations
+sales = (
+    df["Sales"].sum()
+    if "Sales" in df.columns else 0
+)
+
+profit = (
+    df["Order Profit Per Order"].sum()
+    if "Order Profit Per Order" in df.columns else 0
+)
+
+customers = (
+    df["Order Customer Id"].nunique()
+    if "Order Customer Id" in df.columns else 0
+)
+
+orders = (
+    df["Order Id"].nunique()
+    if "Order Id" in df.columns else len(df)
+)
+
+discount = (
+    df["Order Item Discount"].mean()
+    if "Order Item Discount" in df.columns else 0
+)
+
+# KPI cards
+st.subheader("📊 Business Overview")
+
+c1, c2, c3, c4, c5 = st.columns(5)
+
+c1.metric("💰 Total Sales", f"{sales:,.2f}")
+c2.metric("📈 Total Profit", f"{profit:,.2f}")
+c3.metric("🛒 Total Orders", f"{orders:,}")
+c4.metric("👥 Customers", f"{customers:,}")
+c5.metric("🏷️ Avg. Discount", f"{discount:,.2f}")
+
+st.divider()
+
+# Sidebar filters
+filtered = df.copy()
+
+if "Order Region" in filtered.columns:
+    regions = sorted(
+        filtered["Order Region"].dropna().astype(str).unique()
+    )
+    selected_regions = st.sidebar.multiselect(
+        "Filter by Region",
+        regions,
+        default=regions
+    )
+    filtered = filtered[
+        filtered["Order Region"].astype(str).isin(selected_regions)
+    ]
+
+if "Order Status" in filtered.columns:
+    statuses = sorted(
+        filtered["Order Status"].dropna().astype(str).unique()
+    )
+    selected_statuses = st.sidebar.multiselect(
+        "Filter by Order Status",
+        statuses,
+        default=statuses
+    )
+    filtered = filtered[
+        filtered["Order Status"].astype(str).isin(selected_statuses)
+    ]
+
+st.subheader("📍 Sales Analysis")
+
+left, right = st.columns(2)
+
+with left:
+    if {"Order Region", "Sales"}.issubset(filtered.columns):
+        region_sales = (
+            filtered.groupby("Order Region", as_index=False)["Sales"]
+            .sum()
+            .sort_values("Sales", ascending=False)
+        )
+        fig = px.bar(
+            region_sales,
+            x="Order Region",
+            y="Sales",
+            title="Sales by Region",
+            color="Sales",
+            color_continuous_scale="Blues"
+        )
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+with right:
+    if {"Order Region", "Order Profit Per Order"}.issubset(filtered.columns):
+        region_profit = (
+            filtered.groupby("Order Region", as_index=False)
+            ["Order Profit Per Order"].sum()
+        )
+        fig = px.bar(
+            region_profit,
+            x="Order Region",
+            y="Order Profit Per Order",
+            title="Profit by Region",
+            color="Order Profit Per Order",
+            color_continuous_scale="Teal"
+        )
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("👥 Customer & Product Analysis")
+
+left, right = st.columns(2)
+
+with left:
+    if {"Order Customer Id", "Sales"}.issubset(filtered.columns):
+        top_customers = (
+            filtered.groupby("Order Customer Id", as_index=False)["Sales"]
+            .sum()
+            .nlargest(10, "Sales")
+        )
+        top_customers["Order Customer Id"] = (
+            top_customers["Order Customer Id"].astype(str)
+        )
+        fig = px.bar(
+            top_customers,
+            x="Sales",
+            y="Order Customer Id",
+            orientation="h",
+            title="Top 10 Customers by Sales",
+            color="Sales",
+            color_continuous_scale="Blues"
+        )
+        fig.update_layout(
+            template="plotly_dark",
+            yaxis={"categoryorder": "total ascending"}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+with right:
+    if {"Category Name", "Sales"}.issubset(filtered.columns):
+        category_sales = (
+            filtered.groupby("Category Name", as_index=False)["Sales"]
+            .sum()
+            .sort_values("Sales", ascending=False)
+        )
+        fig = px.pie(
+            category_sales,
+            names="Category Name",
+            values="Sales",
+            title="Sales by Category",
+            hole=0.45
+        )
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("🏷️ Discount Analysis")
+
+left, right = st.columns(2)
+
+with left:
+    if {"Order Item Discount", "Sales"}.issubset(filtered.columns):
+        fig = px.scatter(
+            filtered,
+            x="Order Item Discount",
+            y="Sales",
+            title="Discount vs Sales",
+            opacity=0.6
+        )
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+with right:
+    if {"Order Item Discount", "Order Profit Per Order"}.issubset(filtered.columns):
+        fig = px.scatter(
+            filtered,
+            x="Order Item Discount",
+            y="Order Profit Per Order",
+            title="Discount vs Profit",
+            opacity=0.6
+        )
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("💡 Business Insights")
+
+st.write(f"- Total sales in the selected data: **{sales:,.2f}**.")
+st.write(f"- Total profit in the selected data: **{profit:,.2f}**.")
+st.write(f"- Unique customers: **{customers:,}**.")
+st.write(
+    "- Review discount and profit together before deciding on "
+    "discount policies."
+)
+
+st.subheader("🔎 Data Preview")
+st.dataframe(filtered.head(100), use_container_width=True)
+
+csv_data = filtered.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    "⬇️ Download Filtered Data as CSV",
+    data=csv_data,
+    file_name="apl_logistics_filtered.csv",
+    mime="text/csv"
+)
+
+st.success("Dashboard loaded successfully!")
