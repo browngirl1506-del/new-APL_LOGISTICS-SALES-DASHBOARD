@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 
 st.set_page_config(
@@ -9,123 +8,245 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
-<style>
-.stApp {background-color: #071426; color: white;}
-[data-testid="stSidebar"] {background-color: #0D1D35;}
-[data-testid="stMetric"] {
-    background: #102746;
-    border: 1px solid #2D4C72;
-    padding: 12px;
-    border-radius: 10px;
-}
-h1, h2, h3 {color: white !important;}
-</style>
-""", unsafe_allow_html=True)
-
 st.title("📦 APL Logistics Dashboard")
-st.caption("Sales | Customers | Products | Shipping | Discounts")
+st.caption("Sales | Profit | Customers | Products | Shipping")
 
 uploaded_file = st.sidebar.file_uploader(
-    "Upload your CSV or Excel file",
+    "Upload Dataset",
     type=["csv", "xlsx", "xls"]
 )
 
 if uploaded_file is None:
-    st.info("Please upload your APL Logistics dataset from the sidebar.")
+    st.info("Upload your APL Logistics CSV or Excel file to start.")
     st.stop()
 
 try:
     if uploaded_file.name.lower().endswith(".csv"):
-        try:
-            df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding="latin1")
+        df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
 except Exception as e:
-    st.error(f"Unable to read file: {e}")
+    st.error(f"File could not be opened: {e}")
     st.stop()
 
-if df.empty:
-    st.error("The uploaded file is empty.")
-    st.stop()
+df.columns = df.columns.astype(str).str.strip()
 
-df.columns = [str(c).strip() for c in df.columns]
-
-def find_col(candidates):
-    def norm(x):
-        return "".join(ch.lower() for ch in str(x) if ch.isalnum())
-
-    lookup = {norm(c): c for c in df.columns}
-
-    for candidate in candidates:
-        if norm(candidate) in lookup:
-            return lookup[norm(candidate)]
-
-    for candidate in candidates:
-        for key, value in lookup.items():
-            if norm(candidate) in key:
-                return value
-
+def get_column(names):
+    normalized = {
+        c.lower().replace(" ", "").replace("_", ""): c
+        for c in df.columns
+    }
+    for name in names:
+        key = name.lower().replace(" ", "").replace("_", "")
+        if key in normalized:
+            return normalized[key]
     return None
 
-C = {
-    "sales": find_col(["Sales", "Order Item Total", "Total Sales"]),
-    "profit": find_col(["Order Profit Per Order", "Profit"]),
-    "region": find_col(["Order Region", "Region"]),
-    "country": find_col(["Order Country", "Country"]),
-    "city": find_col(["Order City", "City"]),
-    "product": find_col(["Product Name", "Product"]),
-    "category": find_col(["Category Name", "Category"]),
-    "customer": find_col(["Order Customer Id", "Customer Id"]),
-    "quantity": find_col(["Order Item Quantity", "Quantity"]),
-    "status": find_col(["Order Status", "Status"]),
-    "shipping": find_col(["Shipping Mode", "Ship Mode"]),
-    "discount": find_col(["Order Item Discount", "Discount"]),
-    "discount_rate": find_col(["Order Item Discount Rate", "Discount Rate"]),
-    "order_id": find_col(["Order Id", "Order ID"]),
-    "date": find_col(["order date (DateOrders)", "Order Date"]),
-    "price": find_col(["Product Price", "Unit Price"])
-}
+sales_col = get_column(["Sales", "Order Item Total"])
+profit_col = get_column(["Order Profit Per Order", "Profit"])
+product_col = get_column(["Product Name"])
+category_col = get_column(["Category Name"])
+region_col = get_column(["Order Region"])
+customer_col = get_column(["Order Customer Id", "Customer Id"])
+shipping_col = get_column(["Shipping Mode"])
+status_col = get_column(["Order Status"])
+quantity_col = get_column(["Order Item Quantity"])
+discount_col = get_column(["Order Item Discount"])
+date_col = get_column(["order date (DateOrders)", "Order Date"])
 
-for key in ["sales", "profit", "quantity", "discount",
-            "discount_rate", "price"]:
-    col = C[key]
+numeric_cols = [
+    sales_col, profit_col, quantity_col, discount_col
+]
+
+for col in numeric_cols:
     if col:
         df[col] = pd.to_numeric(
-            df[col].astype(str)
-            .str.replace(",", "", regex=False)
-            .str.replace("$", "", regex=False),
+            df[col].astype(str).str.replace(",", "", regex=False),
             errors="coerce"
         )
 
-if C["date"]:
-    df[C["date"]] = pd.to_datetime(df[C["date"]], errors="coerce")
-
-if not C["sales"] and C["price"] and C["quantity"]:
-    df["Calculated Sales"] = df[C["price"]] * df[C["quantity"]]
-    C["sales"] = "Calculated Sales"
-
 st.sidebar.header("Dashboard Filters")
-filtered = df.copy()
+data = df.copy()
 
-for label, key in [
-    ("Region", "region"),
-    ("Country", "country"),
-    ("Category", "category"),
-    ("Product", "product"),
-    ("Order Status", "status"),
-    ("Shipping Mode", "shipping")
-]:
-    col = C[key]
-    if col:
-        options = sorted(filtered[col].dropna().astype(str).unique())
-        selected = st.sidebar.multiselect(label, options)
-        if selected:
-            filtered = filtered[filtered[col].astype(str).isin(selected)]
+if region_col:
+    regions = sorted(data[region_col].dropna().astype(str).unique())
+    selected_regions = st.sidebar.multiselect("Region", regions)
+    if selected_regions:
+        data = data[data[region_col].astype(str).isin(selected_regions)]
 
-if filtered.empty:
-    st.warning("No data found. Please change the filters.")
+if category_col:
+    categories = sorted(data[category_col].dropna().astype(str).unique())
+    selected_categories = st.sidebar.multiselect("Category", categories)
+    if selected_categories:
+        data = data[data[category_col].astype(str).isin(selected_categories)]
+
+if data.empty:
+    st.warning("No data available for these filters.")
     st.stop()
+
+total_sales = data[sales_col].sum() if sales_col else None
+total_profit = data[profit_col].sum() if profit_col else None
+total_orders = data[get_column(["Order Id"])].nunique() if get_column(["Order Id"]) else len(data)
+total_customers = data[customer_col].nunique() if customer_col else None
+total_quantity = data[quantity_col].sum() if quantity_col else None
+
+def show_number(value, prefix=""):
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{prefix}{value:,.2f}"
+
+a, b, c, d, e = st.columns(5)
+a.metric("Total Sales", show_number(total_sales, "$"))
+b.metric("Total Profit", show_number(total_profit, "$"))
+c.metric("Total Orders", f"{total_orders:,}")
+d.metric("Customers", f"{total_customers:,}" if total_customers is not None else "N/A")
+e.metric("Quantity Sold", f"{total_quantity:,.0f}" if total_quantity is not None and pd.notna(total_quantity) else "N/A")
+
+st.divider()
+
+overview, products, shipping, quality = st.tabs([
+    "📊 Sales Overview",
+    "🛍️ Product Analysis",
+    "🚚 Shipping Analysis",
+    "🧹 Data Quality"
+])
+
+with overview:
+    st.subheader("Sales Overview")
+
+    left, right = st.columns(2)
+
+    with left:
+        if category_col and sales_col:
+            chart_data = data.groupby(category_col, as_index=False)[sales_col].sum()
+            fig = px.pie(
+                chart_data,
+                names=category_col,
+                values=sales_col,
+                title="Sales by Category",
+                hole=0.4
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Category Name or Sales column not found.")
+
+    with right:
+        if region_col and sales_col:
+            chart_data = data.groupby(region_col, as_index=False)[sales_col].sum()
+            chart_data = chart_data.sort_values(sales_col, ascending=False).head(10)
+            fig = px.bar(
+                chart_data,
+                x=region_col,
+                y=sales_col,
+                title="Sales by Region"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Order Region or Sales column not found.")
+
+    if profit_col and region_col:
+        chart_data = data.groupby(region_col, as_index=False)[profit_col].sum()
+        fig = px.bar(
+            chart_data,
+            x=region_col,
+            y=profit_col,
+            title="Profit by Region"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    if date_col and sales_col:
+        data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
+        trend = data.dropna(subset=[date_col]).copy()
+        if not trend.empty:
+            trend["Month"] = trend[date_col].dt.to_period("M").astype(str)
+            trend = trend.groupby("Month", as_index=False)[sales_col].sum()
+            fig = px.line(
+                trend,
+                x="Month",
+                y=sales_col,
+                markers=True,
+                title="Monthly Sales Trend"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+with products:
+    st.subheader("Product Analysis")
+
+    if product_col and sales_col:
+        chart_data = data.groupby(product_col, as_index=False)[sales_col].sum()
+        chart_data = chart_data.sort_values(sales_col, ascending=False).head(10)
+        fig = px.bar(
+            chart_data,
+            x=sales_col,
+            y=product_col,
+            orientation="h",
+            title="Top 10 Products by Sales"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Product Name or Sales column not found.")
+
+    if category_col and quantity_col:
+        chart_data = data.groupby(category_col, as_index=False)[quantity_col].sum()
+        fig = px.bar(
+            chart_data,
+            x=category_col,
+            y=quantity_col,
+            title="Quantity by Category"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+with shipping:
+    st.subheader("Shipping Analysis")
+
+    if shipping_col:
+        chart_data = data[shipping_col].fillna("Unknown").value_counts().reset_index()
+        chart_data.columns = ["Shipping Mode", "Orders"]
+        fig = px.pie(
+            chart_data,
+            names="Shipping Mode",
+            values="Orders",
+            title="Orders by Shipping Mode"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Shipping Mode column not found.")
+
+    if status_col:
+        chart_data = data[status_col].fillna("Unknown").value_counts().reset_index()
+        chart_data.columns = ["Order Status", "Count"]
+        fig = px.bar(
+            chart_data,
+            x="Order Status",
+            y="Count",
+            title="Orders by Status"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+with quality:
+    st.subheader("Data Quality Check")
+
+    x, y, z = st.columns(3)
+    x.metric("Total Rows", f"{len(data):,}")
+    y.metric("Total Columns", f"{len(data.columns):,}")
+    z.metric("Duplicate Rows", f"{data.duplicated().sum():,}")
+
+    quality_data = pd.DataFrame({
+        "Column": data.columns,
+        "Missing Values": [data[col].isna().sum() for col in data.columns],
+        "Data Type": [str(data[col].dtype) for col in data.columns]
+    })
+
+    st.dataframe(quality_data, use_container_width=True)
+    st.subheader("Data Preview")
+    st.dataframe(data.head(100), use_container_width=True)
+
+    st.download_button(
+        "Download Filtered CSV",
+        data=data.to_csv(index=False).encode("utf-8-sig"),
+        file_name="APL_Logistics_Data.csv",
+        mime="text/csv"
+    )
+
+st.divider()
+st.caption("APL Logistics | Sales and Operations Analysis")
