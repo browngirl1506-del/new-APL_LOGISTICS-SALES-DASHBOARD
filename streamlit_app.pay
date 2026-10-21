@@ -11,260 +11,121 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-.stApp {
-    background-color: #071426;
-    color: white;
-}
+.stApp {background-color: #071426; color: white;}
+[data-testid="stSidebar"] {background-color: #0D1D35;}
 [data-testid="stMetric"] {
-    background-color: #142B49;
-    padding: 18px;
-    border-radius: 12px;
-    border: 1px solid #29476B;
+    background: #102746;
+    border: 1px solid #2D4C72;
+    padding: 12px;
+    border-radius: 10px;
 }
-h1, h2, h3 {
-    color: #8DB8FF;
-}
+h1, h2, h3 {color: white !important;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📦 APL Logistics Sales Dashboard")
-st.caption("Sales Performance | Customer Analysis | Discount Insights")
+st.title("📦 APL Logistics Dashboard")
+st.caption("Sales | Customers | Products | Shipping | Discounts")
 
 uploaded_file = st.sidebar.file_uploader(
-    "Upload APL Logistics CSV or Excel file",
-    type=["csv", "xlsx"]
+    "Upload your CSV or Excel file",
+    type=["csv", "xlsx", "xls"]
 )
 
 if uploaded_file is None:
-    st.info("Please upload your cleaned APL Logistics dataset.")
+    st.info("Please upload your APL Logistics dataset from the sidebar.")
     st.stop()
 
 try:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+    if uploaded_file.name.lower().endswith(".csv"):
+        try:
+            df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, encoding="latin1")
     else:
         df = pd.read_excel(uploaded_file)
-
-    df.columns = df.columns.str.strip()
-
 except Exception as e:
-    st.error(f"Could not read the file: {e}")
+    st.error(f"Unable to read file: {e}")
     st.stop()
 
-st.sidebar.success(f"Loaded {len(df):,} rows")
+if df.empty:
+    st.error("The uploaded file is empty.")
+    st.stop()
 
-# Convert numeric columns
-numeric_columns = [
-    "Sales", "Order Profit Per Order",
-    "Order Item Discount", "Order Item Quantity",
-    "Order Item Product Price"
-]
+df.columns = [str(c).strip() for c in df.columns]
 
-for col in numeric_columns:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+def find_col(candidates):
+    def norm(x):
+        return "".join(ch.lower() for ch in str(x) if ch.isalnum())
 
-# KPI calculations
-sales = (
-    df["Sales"].sum()
-    if "Sales" in df.columns else 0
-)
+    lookup = {norm(c): c for c in df.columns}
 
-profit = (
-    df["Order Profit Per Order"].sum()
-    if "Order Profit Per Order" in df.columns else 0
-)
+    for candidate in candidates:
+        if norm(candidate) in lookup:
+            return lookup[norm(candidate)]
 
-customers = (
-    df["Order Customer Id"].nunique()
-    if "Order Customer Id" in df.columns else 0
-)
+    for candidate in candidates:
+        for key, value in lookup.items():
+            if norm(candidate) in key:
+                return value
 
-orders = (
-    df["Order Id"].nunique()
-    if "Order Id" in df.columns else len(df)
-)
+    return None
 
-discount = (
-    df["Order Item Discount"].mean()
-    if "Order Item Discount" in df.columns else 0
-)
+C = {
+    "sales": find_col(["Sales", "Order Item Total", "Total Sales"]),
+    "profit": find_col(["Order Profit Per Order", "Profit"]),
+    "region": find_col(["Order Region", "Region"]),
+    "country": find_col(["Order Country", "Country"]),
+    "city": find_col(["Order City", "City"]),
+    "product": find_col(["Product Name", "Product"]),
+    "category": find_col(["Category Name", "Category"]),
+    "customer": find_col(["Order Customer Id", "Customer Id"]),
+    "quantity": find_col(["Order Item Quantity", "Quantity"]),
+    "status": find_col(["Order Status", "Status"]),
+    "shipping": find_col(["Shipping Mode", "Ship Mode"]),
+    "discount": find_col(["Order Item Discount", "Discount"]),
+    "discount_rate": find_col(["Order Item Discount Rate", "Discount Rate"]),
+    "order_id": find_col(["Order Id", "Order ID"]),
+    "date": find_col(["order date (DateOrders)", "Order Date"]),
+    "price": find_col(["Product Price", "Unit Price"])
+}
 
-# KPI cards
-st.subheader("📊 Business Overview")
+for key in ["sales", "profit", "quantity", "discount",
+            "discount_rate", "price"]:
+    col = C[key]
+    if col:
+        df[col] = pd.to_numeric(
+            df[col].astype(str)
+            .str.replace(",", "", regex=False)
+            .str.replace("$", "", regex=False),
+            errors="coerce"
+        )
 
-c1, c2, c3, c4, c5 = st.columns(5)
+if C["date"]:
+    df[C["date"]] = pd.to_datetime(df[C["date"]], errors="coerce")
 
-c1.metric("💰 Total Sales", f"{sales:,.2f}")
-c2.metric("📈 Total Profit", f"{profit:,.2f}")
-c3.metric("🛒 Total Orders", f"{orders:,}")
-c4.metric("👥 Customers", f"{customers:,}")
-c5.metric("🏷️ Avg. Discount", f"{discount:,.2f}")
+if not C["sales"] and C["price"] and C["quantity"]:
+    df["Calculated Sales"] = df[C["price"]] * df[C["quantity"]]
+    C["sales"] = "Calculated Sales"
 
-st.divider()
-
-# Sidebar filters
+st.sidebar.header("Dashboard Filters")
 filtered = df.copy()
 
-if "Order Region" in filtered.columns:
-    regions = sorted(
-        filtered["Order Region"].dropna().astype(str).unique()
-    )
-    selected_regions = st.sidebar.multiselect(
-        "Filter by Region",
-        regions,
-        default=regions
-    )
-    filtered = filtered[
-        filtered["Order Region"].astype(str).isin(selected_regions)
-    ]
+for label, key in [
+    ("Region", "region"),
+    ("Country", "country"),
+    ("Category", "category"),
+    ("Product", "product"),
+    ("Order Status", "status"),
+    ("Shipping Mode", "shipping")
+]:
+    col = C[key]
+    if col:
+        options = sorted(filtered[col].dropna().astype(str).unique())
+        selected = st.sidebar.multiselect(label, options)
+        if selected:
+            filtered = filtered[filtered[col].astype(str).isin(selected)]
 
-if "Order Status" in filtered.columns:
-    statuses = sorted(
-        filtered["Order Status"].dropna().astype(str).unique()
-    )
-    selected_statuses = st.sidebar.multiselect(
-        "Filter by Order Status",
-        statuses,
-        default=statuses
-    )
-    filtered = filtered[
-        filtered["Order Status"].astype(str).isin(selected_statuses)
-    ]
-
-st.subheader("📍 Sales Analysis")
-
-left, right = st.columns(2)
-
-with left:
-    if {"Order Region", "Sales"}.issubset(filtered.columns):
-        region_sales = (
-            filtered.groupby("Order Region", as_index=False)["Sales"]
-            .sum()
-            .sort_values("Sales", ascending=False)
-        )
-        fig = px.bar(
-            region_sales,
-            x="Order Region",
-            y="Sales",
-            title="Sales by Region",
-            color="Sales",
-            color_continuous_scale="Blues"
-        )
-        fig.update_layout(template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    if {"Order Region", "Order Profit Per Order"}.issubset(filtered.columns):
-        region_profit = (
-            filtered.groupby("Order Region", as_index=False)
-            ["Order Profit Per Order"].sum()
-        )
-        fig = px.bar(
-            region_profit,
-            x="Order Region",
-            y="Order Profit Per Order",
-            title="Profit by Region",
-            color="Order Profit Per Order",
-            color_continuous_scale="Teal"
-        )
-        fig.update_layout(template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("👥 Customer & Product Analysis")
-
-left, right = st.columns(2)
-
-with left:
-    if {"Order Customer Id", "Sales"}.issubset(filtered.columns):
-        top_customers = (
-            filtered.groupby("Order Customer Id", as_index=False)["Sales"]
-            .sum()
-            .nlargest(10, "Sales")
-        )
-        top_customers["Order Customer Id"] = (
-            top_customers["Order Customer Id"].astype(str)
-        )
-        fig = px.bar(
-            top_customers,
-            x="Sales",
-            y="Order Customer Id",
-            orientation="h",
-            title="Top 10 Customers by Sales",
-            color="Sales",
-            color_continuous_scale="Blues"
-        )
-        fig.update_layout(
-            template="plotly_dark",
-            yaxis={"categoryorder": "total ascending"}
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    if {"Category Name", "Sales"}.issubset(filtered.columns):
-        category_sales = (
-            filtered.groupby("Category Name", as_index=False)["Sales"]
-            .sum()
-            .sort_values("Sales", ascending=False)
-        )
-        fig = px.pie(
-            category_sales,
-            names="Category Name",
-            values="Sales",
-            title="Sales by Category",
-            hole=0.45
-        )
-        fig.update_layout(template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("🏷️ Discount Analysis")
-
-left, right = st.columns(2)
-
-with left:
-    if {"Order Item Discount", "Sales"}.issubset(filtered.columns):
-        fig = px.scatter(
-            filtered,
-            x="Order Item Discount",
-            y="Sales",
-            title="Discount vs Sales",
-            opacity=0.6
-        )
-        fig.update_layout(template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
-
-with right:
-    if {"Order Item Discount", "Order Profit Per Order"}.issubset(filtered.columns):
-        fig = px.scatter(
-            filtered,
-            x="Order Item Discount",
-            y="Order Profit Per Order",
-            title="Discount vs Profit",
-            opacity=0.6
-        )
-        fig.update_layout(template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("💡 Business Insights")
-
-st.write(f"- Total sales in the selected data: **{sales:,.2f}**.")
-st.write(f"- Total profit in the selected data: **{profit:,.2f}**.")
-st.write(f"- Unique customers: **{customers:,}**.")
-st.write(
-    "- Review discount and profit together before deciding on "
-    "discount policies."
-)
-
-st.subheader("🔎 Data Preview")
-st.dataframe(filtered.head(100), use_container_width=True)
-
-csv_data = filtered.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "⬇️ Download Filtered Data as CSV",
-    data=csv_data,
-    file_name="apl_logistics_filtered.csv",
-    mime="text/csv"
-)
-
-st.success("Dashboard loaded successfully!")
+if filtered.empty:
+    st.warning("No data found. Please change the filters.")
+    st.stop()
